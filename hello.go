@@ -16,21 +16,22 @@ const (
 
 // ValidateClientHello can be used to identify the input bytes as a TLS ClientHello message. Returns
 // an error iff the input message cannot be parsed as a client hello. Returns io.EOF if the message
-// is well-formed, but incomplete.
-func ValidateClientHello(b []byte) error {
+// is well-formed, but incomplete. When b contains a complete ClientHello, the return value n
+// indicates that the first n bytes of b contain the record.
+func ValidateClientHello(b []byte) (n int, err error) {
 	msgType, b, err := parseHandshakeHeader(b)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if msgType != typeClientHello {
-		return fmt.Errorf("expected client hello message, got TLS handshake type %d", b[0])
+		return 0, fmt.Errorf("expected client hello message, got TLS handshake type %d", b[0])
 	}
 
 	m := new(clientHelloMsg)
 	if !m.unmarshal(b) {
-		return fmt.Errorf("malformed message")
+		return 0, fmt.Errorf("malformed message")
 	}
-	return nil
+	return len(b) + recordHeaderLen, nil
 }
 
 // A ServerHello message. Only includes a subset of fields on the message.
@@ -78,7 +79,7 @@ func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
 		return 0, nil, fmt.Errorf("message of length %d bytes exceeds maximum of %d bytes", n, maxHandshake)
 	}
 	if len(b) < 4+n {
-		return 0, nil, fmt.Errorf("message too small: length specified as %d, but actually %d", 4+n, len(b))
+		return 0, nil, fmt.Errorf("message too small: length specified as %d, but is actually %d", 4+n, len(b))
 	}
 	return msgType, b[:n+4], nil
 }
