@@ -17,9 +17,15 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// A cipher suite currently in use.
+type cipherState struct {
+	cipher interface{}
+	mac    macFunction
+}
+
 // cipherSuiteI is an interface unifying the cipherSuite and cipherSuiteTLS13 types.
 type cipherSuiteI interface {
-	getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) (cipher interface{}, mac macFunction)
+	getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState
 }
 
 var cipherSuites = map[uint16]cipherSuiteI{
@@ -65,20 +71,19 @@ type cipherSuite struct {
 	aead   func(key, fixedNonce []byte) aead
 }
 
-func (cs cipherSuite) getCipher(
-	secret [52]byte, iv [16]byte, reading bool, version uint16) (cipher interface{}, mac macFunction) {
-
+func (cs cipherSuite) getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
+	c := cipherState{}
 	key, trimmedIV := secret[:cs.keyLen], iv[:cs.ivLen]
 	if cs.cipher != nil {
-		cipher = cs.cipher(key, trimmedIV, reading)
+		c.cipher = cs.cipher(key, trimmedIV, reading)
 	} else {
-		cipher = cs.aead(key, trimmedIV)
+		c.cipher = cs.aead(key, trimmedIV)
 	}
 	if cs.mac != nil {
 		macKey := secret[cs.keyLen : cs.keyLen+cs.macLen]
-		mac = cs.mac(version, macKey)
+		c.mac = cs.mac(version, macKey)
 	}
-	return
+	return &c
 }
 
 // A cipherSuiteTLS13 defines only the pair of the AEAD algorithm and hash
@@ -89,14 +94,12 @@ type cipherSuiteTLS13 struct {
 	hash   crypto.Hash
 }
 
-func (cs cipherSuiteTLS13) getCipher(
-	secret [52]byte, iv [16]byte, reading bool, version uint16) (cipher interface{}, mac macFunction) {
-
+func (cs cipherSuiteTLS13) getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
 	trafficSecret := make([]byte, len(secret)+len(iv))
 	copy(trafficSecret, secret[:])
 	copy(trafficSecret[len(secret):], iv[:])
 	derivedKey, derivedIV := cs.trafficKey(trafficSecret)
-	return cs.aead(derivedKey, derivedIV), nil
+	return &cipherState{cs.aead(derivedKey, derivedIV), nil}
 }
 
 // expandLabel implements HKDF-Expand-Label from RFC 8446, Section 7.1.

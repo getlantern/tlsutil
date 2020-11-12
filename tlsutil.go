@@ -39,13 +39,11 @@ const (
 // key and MAC key as needed for the connection's cipher suite.
 //
 // This function is adapted from tls.Conn.writeRecordLocked.
-func WriteRecord(w io.Writer, data []byte, cs *ConnectionState, secret [52]byte, iv [16]byte) (int, error) {
-	cipher, mac := cs.cipherSuite.getCipher(secret, iv, false, cs.version)
-
+func WriteRecord(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
 	var n int
 	for len(data) > 0 {
 		m := len(data)
-		if maxPayload := cs.maxPayloadSizeForWrite(cipher, mac); m > maxPayload {
+		if maxPayload := cs.maxPayloadSizeForWrite(); m > maxPayload {
 			m = maxPayload
 		}
 
@@ -67,7 +65,7 @@ func WriteRecord(w io.Writer, data []byte, cs *ConnectionState, secret [52]byte,
 		outBuf[4] = byte(m)
 
 		var err error
-		outBuf, err = cs.encrypt(outBuf, data[:m], cipher, mac, rand.Reader)
+		outBuf, err = cs.encrypt(outBuf, data[:m], rand.Reader)
 		if err != nil {
 			return n, err
 		}
@@ -98,36 +96,32 @@ type ReadResult struct {
 // record data or error.
 //
 // This function is adapted from tls.Conn.readRecordOrCCS.
-func ReadRecord(
-	r io.Reader, cs *ConnectionState, secret [52]byte, iv [16]byte) (data []byte, unprocessed []byte, err error) {
+func ReadRecord(r io.Reader, cs *ConnectionState) (data []byte, unprocessed []byte, err error) {
 
 	buf := new(bytes.Buffer)
-	record, _, err := readRecord(r, buf, cs, secret, iv, recordTypeApplicationData)
+	record, _, err := readRecord(r, buf, cs, recordTypeApplicationData)
 	return record, buf.Bytes(), err
 }
 
 // ReadRecords is like ReadRecord, but attempts to read all records in r. Results will be returned
 // in a slice.
-func ReadRecords(r io.Reader, cs *ConnectionState, secret [52]byte, iv [16]byte) []ReadResult {
+func ReadRecords(r io.Reader, cs *ConnectionState) []ReadResult {
 	var (
 		buf                 = new(bytes.Buffer)
-		firstRecord, n, err = readRecord(r, buf, cs, secret, iv, recordTypeApplicationData)
+		firstRecord, n, err = readRecord(r, buf, cs, recordTypeApplicationData)
 		results             = []ReadResult{{firstRecord, err, n - buf.Len()}}
 		lastLen             = 0
 	)
 	for buf.Len() > 0 && buf.Len() != lastLen {
 		lastLen = buf.Len()
-		record, currentN, err := readRecord(r, buf, cs, secret, iv, recordTypeApplicationData)
+		record, currentN, err := readRecord(r, buf, cs, recordTypeApplicationData)
 		n += currentN
 		results = append(results, ReadResult{record, err, n - buf.Len()})
 	}
 	return results
 }
 
-func readRecord(
-	r io.Reader, buf *bytes.Buffer, cs *ConnectionState,
-	secret [52]byte, iv [16]byte, expectedType recordType) ([]byte, int, error) {
-
+func readRecord(r io.Reader, buf *bytes.Buffer, cs *ConnectionState, expectedType recordType) ([]byte, int, error) {
 	n64, err := readFromUntil(r, buf, recordHeaderLen)
 	n := int(n64)
 	if err != nil {
@@ -156,8 +150,7 @@ func readRecord(
 	}
 
 	// Process message.
-	cipher, mac := cs.cipherSuite.getCipher(secret, iv, true, cs.version)
-	data, typ, err := cs.decrypt(buf.Next(recordHeaderLen+payloadLen), cipher, mac)
+	data, typ, err := cs.decrypt(buf.Next(recordHeaderLen + payloadLen))
 	if err != nil {
 		return nil, n, &net.OpError{Op: "local error", Err: err}
 	}
@@ -169,7 +162,7 @@ func readRecord(
 		return nil, n, fmt.Errorf("unexpected record type: %d (expected %d)", typ, expectedType)
 	}
 	// Application Data messages are always protected.
-	if cipher == nil && typ == recordTypeApplicationData {
+	if cs.readCipher == nil && typ == recordTypeApplicationData {
 		return nil, n, &net.OpError{Op: "local error", Err: errors.New("unexpected message")}
 	}
 

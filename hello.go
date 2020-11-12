@@ -67,8 +67,8 @@ func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
 	}
 
 	version := uint16(b[1])<<8 | uint16(b[2])
-	cs := &ConnectionState{version: version, cipherSuite: uninitializedSuite{}}
-	b, _, err = readRecord(bytes.NewReader(b), new(bytes.Buffer), cs, [52]byte{}, [16]byte{}, recordTypeHandshake)
+	cs := &ConnectionState{version: version}
+	b, _, err = readRecord(bytes.NewReader(b), new(bytes.Buffer), cs, recordTypeHandshake)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -567,10 +567,4 @@ type curveID uint16
 type keyShare struct {
 	group curveID
 	data  []byte
-}
-
-type uninitializedSuite struct{}
-
-func (s uninitializedSuite) getCipher(_ [52]byte, _ [16]byte, _ bool, _ uint16) (interface{}, macFunction) {
-	return nil, nil
 }
