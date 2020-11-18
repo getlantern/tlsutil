@@ -10,6 +10,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/tls"
+	"fmt"
 	"hash"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -39,7 +40,7 @@ func (cs cipherState) explicitNonceLen(version uint16) int {
 		}
 		return 0
 	default:
-		panic("unknown cipher type")
+		panic(fmt.Sprintf("unknown cipher type: %#x", c))
 	}
 }
 

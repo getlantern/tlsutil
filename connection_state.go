@@ -80,7 +80,7 @@ func (cs ConnectionState) maxPayloadSizeForWrite() int {
 			// payload size directly.
 			payloadBytes -= mac.Size()
 		default:
-			panic(fmt.Sprintf("unknown cipher type: %v", ciph))
+			panic(fmt.Sprintf("unknown cipher type: %#x", ciph))
 		}
 	} else {
 		return maxPlaintext
@@ -168,7 +168,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]by
 		}
 		c.CryptBlocks(dst, dst)
 	default:
-		panic(fmt.Sprintf("unknown cipher type: %v", c))
+		panic(fmt.Sprintf("unknown cipher type: %#x", c))
 	}
 
 	// Update length to include nonce, MAC and any block padding needed.
@@ -256,7 +256,7 @@ func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 				paddingLen, paddingGood = extractPadding(payload)
 			}
 		default:
-			panic(fmt.Sprintf("unknown cipher type: %v", c))
+			panic(fmt.Sprintf("unknown cipher type: %#x", c))
 		}
 
 		if cs.version == tls.VersionTLS13 {
