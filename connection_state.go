@@ -22,8 +22,9 @@ type ConnectionState struct {
 // NewConnectionState creates a connection state based on the input version and cipher suite. The
 // suite should be represented in https://golang.org/pkg/crypto/tls/#pkg-constants.
 //
-// The sequence number is used as a nonce in some cipher suites. Thus it must be unique
-// per-connection and agreed upon by both client and server.
+// The secret, IV, and sequence number will be used as needed as parameters for the cipher suite.
+// The sequence number is sometimes used as a nonce and should thus be unique per-connection. All
+// parameters should be agreed upon by both client and server.
 func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byte, seq [8]byte) (
 	*ConnectionState, error) {
 
