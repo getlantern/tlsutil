@@ -23,6 +23,26 @@ type cipherState struct {
 	mac    macFunction
 }
 
+// explicitNonceLen returns the number of bytes of explicit nonce or IV included
+// in each record. Explicit nonces are present only in CBC modes after TLS 1.0
+// and in certain AEAD modes in TLS 1.2.
+func (cs cipherState) explicitNonceLen(version uint16) int {
+	switch c := cs.cipher.(type) {
+	case cipher.Stream:
+		return 0
+	case aead:
+		return c.explicitNonceLen()
+	case cbcMode:
+		// TLS 1.1 introduced a per-record explicit IV to fix the BEAST attack.
+		if version >= tls.VersionTLS11 {
+			return c.BlockSize()
+		}
+		return 0
+	default:
+		panic("unknown cipher type")
+	}
+}
+
 // cipherSuiteI is an interface unifying the cipherSuite and cipherSuiteTLS13 types.
 type cipherSuiteI interface {
 	getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState

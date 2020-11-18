@@ -40,44 +40,14 @@ func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byt
 	}, nil
 }
 
-// explicitNonceLen returns the number of bytes of explicit nonce or IV included
-// in each record. Explicit nonces are present only in CBC modes after TLS 1.0
-// and in certain AEAD modes in TLS 1.2.
-func (cs ConnectionState) explicitNonceLen(reading bool) int {
-	if reading && cs.readCipher == nil {
-		return 0
-	}
-	if !reading && cs.writeCipher == nil {
-		return 0
-	}
-
-	var _cipher interface{}
-	if reading {
-		_cipher = cs.readCipher.cipher
-	} else {
-		_cipher = cs.writeCipher.cipher
-	}
-
-	switch c := _cipher.(type) {
-	case cipher.Stream:
-		return 0
-	case aead:
-		return c.explicitNonceLen()
-	case cbcMode:
-		// TLS 1.1 introduced a per-record explicit IV to fix the BEAST attack.
-		if cs.version >= tls.VersionTLS11 {
-			return c.BlockSize()
-		}
-		return 0
-	default:
-		panic("unknown cipher type")
-	}
-}
-
 // Simplified version of tls.Conn.maxPayloadSizeForWrite.
 // Subtract TLS overheads to get the maximum payload size.
 func (cs ConnectionState) maxPayloadSizeForWrite() int {
-	payloadBytes := tcpMSSEstimate - recordHeaderLen - cs.explicitNonceLen(false)
+	explicitNonceLen := 0
+	if cs.writeCipher != nil {
+		explicitNonceLen = cs.writeCipher.explicitNonceLen(cs.version)
+	}
+	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitNonceLen
 	if cs.writeCipher != nil {
 		mac := cs.writeCipher.mac
 		switch ciph := cs.writeCipher.cipher.(type) {
@@ -112,7 +82,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]by
 	_cipher := cs.writeCipher.cipher
 
 	var explicitNonce []byte
-	if explicitNonceLen := cs.explicitNonceLen(false); explicitNonceLen > 0 {
+	if explicitNonceLen := cs.writeCipher.explicitNonceLen(cs.version); explicitNonceLen > 0 {
 		record, explicitNonce = sliceForAppend(record, explicitNonceLen)
 		if _, isCBC := _cipher.(cbcMode); !isCBC && explicitNonceLen < 16 {
 			// The AES-GCM construction in TLS has an explicit nonce so that the
@@ -208,7 +178,10 @@ func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 	paddingGood := byte(255)
 	paddingLen := 0
 
-	explicitNonceLen := cs.explicitNonceLen(true)
+	explicitNonceLen := 0
+	if cs.readCipher != nil {
+		explicitNonceLen = cs.readCipher.explicitNonceLen(cs.version)
+	}
 
 	if cs.readCipher != nil {
 		switch c := cs.readCipher.cipher.(type) {
