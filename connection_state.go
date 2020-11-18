@@ -22,8 +22,9 @@ type ConnectionState struct {
 // NewConnectionState creates a connection state based on the input version and cipher suite. The
 // suite should be represented in https://golang.org/pkg/crypto/tls/#pkg-constants.
 //
-// The sequence number is used as a nonce in some cipher suites. Thus it must be unique
-// per-connection and agreed upon by both client and server.
+// The secret, IV, and sequence number will be used as needed as parameters for the cipher suite.
+// The sequence number is sometimes used as a nonce and should thus be unique per-connection. All
+// parameters should be agreed upon by both client and server.
 func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byte, seq [8]byte) (
 	*ConnectionState, error) {
 
@@ -55,35 +56,14 @@ func (cs *ConnectionState) getReadCipher() interface{} {
 	return cs.readCipher.cipher
 }
 
-// explicitNonceLen returns the number of bytes of explicit nonce or IV included
-// in each record. Explicit nonces are present only in CBC modes after TLS 1.0
-// and in certain AEAD modes in TLS 1.2.
-func (cs *ConnectionState) explicitNonceLen(_cipher interface{}) int {
-	if _cipher == nil {
-		return 0
-	}
-
-	switch c := _cipher.(type) {
-	case cipher.Stream:
-		return 0
-	case aead:
-		return c.explicitNonceLen()
-	case cbcMode:
-		// TLS 1.1 introduced a per-record explicit IV to fix the BEAST attack.
-		if cs.version >= tls.VersionTLS11 {
-			return c.BlockSize()
-		}
-		return 0
-	default:
-		panic(fmt.Sprintf("unknown cipher type: %v", c))
-	}
-}
-
 // Simplified version of tls.Conn.maxPayloadSizeForWrite.
 // Subtract TLS overheads to get the maximum payload size.
-func (cs *ConnectionState) maxPayloadSizeForWrite() int {
-	_cipher := cs.getWriteCipher()
-	payloadBytes := tcpMSSEstimate - recordHeaderLen - cs.explicitNonceLen(_cipher)
+func (cs ConnectionState) maxPayloadSizeForWrite() int {
+	explicitNonceLen := 0
+	if cs.writeCipher != nil {
+		explicitNonceLen = cs.writeCipher.explicitNonceLen(cs.version)
+	}
+	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitNonceLen
 	if cs.writeCipher != nil {
 		mac := cs.writeCipher.mac
 		switch ciph := cs.writeCipher.cipher.(type) {
@@ -118,7 +98,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]by
 	}
 
 	var explicitNonce []byte
-	if explicitNonceLen := cs.explicitNonceLen(_cipher); explicitNonceLen > 0 {
+	if explicitNonceLen := cs.writeCipher.explicitNonceLen(cs.version); explicitNonceLen > 0 {
 		record, explicitNonce = sliceForAppend(record, explicitNonceLen)
 		if _, isCBC := _cipher.(cbcMode); !isCBC && explicitNonceLen < 16 {
 			// The AES-GCM construction in TLS has an explicit nonce so that the
@@ -214,11 +194,14 @@ func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 	paddingGood := byte(255)
 	paddingLen := 0
 
-	_cipher := cs.getReadCipher()
-	explicitNonceLen := cs.explicitNonceLen(_cipher)
+	explicitNonceLen := 0
+	if cs.readCipher != nil {
+		explicitNonceLen = cs.readCipher.explicitNonceLen(cs.version)
+	}
 
+	_cipher := cs.getReadCipher()
 	if _cipher != nil {
-		switch c := cs.readCipher.cipher.(type) {
+		switch c := _cipher.(type) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case aead:
