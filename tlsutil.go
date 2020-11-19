@@ -79,13 +79,11 @@ func WriteRecord(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
 	return n, nil
 }
 
-// ReadResult is the result of an attempt to read a TLS record. One of either Data or Err will be
-// non-nil.
+// ReadResult is the result of an attempt to read a TLS record.
 type ReadResult struct {
 	Data []byte
-	Err  error
 
-	// N is the number of bytes read off the reader including this record.
+	// N is the total number of bytes read off the reader up to and including this record.
 	N int
 }
 
@@ -97,7 +95,6 @@ type ReadResult struct {
 //
 // This function is adapted from tls.Conn.readRecordOrCCS.
 func ReadRecord(r io.Reader, cs *ConnectionState) (data []byte, unprocessed []byte, err error) {
-
 	buf := new(bytes.Buffer)
 	record, _, err := readRecord(r, buf, cs, recordTypeApplicationData)
 	return record, buf.Bytes(), err
@@ -105,22 +102,42 @@ func ReadRecord(r io.Reader, cs *ConnectionState) (data []byte, unprocessed []by
 
 // ReadRecords is like ReadRecord, but attempts to read all records in r. Results will be returned
 // in a slice.
-func ReadRecords(r io.Reader, cs *ConnectionState) []ReadResult {
+func ReadRecords(r io.Reader, cs *ConnectionState) ([]ReadResult, error) {
 	var (
-		buf                 = new(bytes.Buffer)
-		firstRecord, n, err = readRecord(r, buf, cs, recordTypeApplicationData)
-		results             = []ReadResult{{firstRecord, err, n - buf.Len()}}
-		lastLen             = 0
+		buf            = new(bytes.Buffer)
+		record, n, err = readRecord(r, buf, cs, recordTypeApplicationData)
+		currentN       int
 	)
-	for buf.Len() > 0 && buf.Len() != lastLen {
-		lastLen = buf.Len()
-		record, currentN, err := readRecord(r, buf, cs, recordTypeApplicationData)
-		n += currentN
-		results = append(results, ReadResult{record, err, n - buf.Len()})
+	if err != nil {
+		return nil, err
 	}
-	return results
+
+	copyBytes := func(b []byte) []byte {
+		copied := make([]byte, len(b))
+		copy(copied, b)
+		return copied
+	}
+	results := []ReadResult{{copyBytes(record), n - buf.Len()}}
+
+	// It is possible for the loop below to exit "early" - while there are still unread records in
+	// r. This would happen if r.Read returned a slice ending at a record boundary. In practice,
+	// this likely means that records arrived while this function was executing. It is reasonable
+	// that we cannot guarantee such records will be read. Additionally, the consequences are small
+	// as the caller can simply call this function again if they are expecting more data.
+
+	for buf.Len() > 0 {
+		record, currentN, err = readRecord(r, buf, cs, recordTypeApplicationData)
+		if err != nil {
+			return nil, err
+		}
+		n += currentN
+		results = append(results, ReadResult{copyBytes(record), n - buf.Len()})
+	}
+	return results, nil
 }
 
+// The returned byte slice is owned by buf. If consecutive calls are made with the same buffer, the
+// contents of the returned slice should be copied between calls.
 func readRecord(r io.Reader, buf *bytes.Buffer, cs *ConnectionState, expectedType recordType) ([]byte, int, error) {
 	n64, err := readFromUntil(r, buf, recordHeaderLen)
 	n := int(n64)

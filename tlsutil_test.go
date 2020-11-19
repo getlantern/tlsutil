@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,22 +14,77 @@ import (
 func TestReadAndWrite(t *testing.T) {
 	t.Parallel()
 
-	var (
-		secret [52]byte
-		iv     [16]byte
-		seq    [8]byte
-		err    error
+	msg := make([]byte, 1024)
+	secret, iv, seq := createTestData(t, msg)
 
-		msg = "some great secret"
-		buf = new(bytes.Buffer)
+	testFunc := func(t *testing.T, version, suite uint16) {
+		t.Helper()
+		buf := new(bytes.Buffer)
+
+		writerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		require.NoError(t, err)
+		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		require.NoError(t, err)
+
+		_, err = WriteRecord(buf, msg, writerState)
+		require.NoError(t, err)
+
+		roundTripped, unprocessed, err := ReadRecord(buf, readerState)
+		require.NoError(t, err)
+		require.Equal(t, 0, len(unprocessed))
+		require.Equal(t, msg, roundTripped)
+	}
+
+	testOverAllSuites(t, testFunc)
+}
+
+func TestReadRecords(t *testing.T) {
+	t.Parallel()
+
+	const (
+		// Each message will take at least two records (the max record size is 16 KB).
+		msgSize = 32 * 1024
+
+		numMsgs = 5
 	)
 
-	_, err = rand.Read(secret[:])
-	require.NoError(t, err)
-	_, err = rand.Read(iv[:])
-	require.NoError(t, err)
-	_, err = rand.Read(seq[:])
-	require.NoError(t, err)
+	msgs := make([][]byte, numMsgs)
+	for i := range msgs {
+		msgs[i] = make([]byte, msgSize)
+	}
+	secret, iv, seq := createTestData(t, msgs...)
+	totalMsgs := concat(msgs...)
+
+	testFunc := func(t *testing.T, version, suite uint16) {
+		t.Helper()
+		buf := new(bytes.Buffer)
+
+		writerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		require.NoError(t, err)
+		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		require.NoError(t, err)
+
+		for _, msg := range msgs {
+			_, err = WriteRecord(buf, msg, writerState)
+			require.NoError(t, err)
+		}
+
+		results, err := ReadRecords(buf, readerState)
+		require.NoError(t, err)
+		totalResults := []byte{}
+		for _, r := range results {
+			totalResults = append(totalResults, r.Data...)
+		}
+		require.Equal(t, len(totalMsgs), len(totalResults))
+		equal, diff := compareBytes(totalResults, totalMsgs)
+		require.True(t, equal, diff)
+	}
+
+	testOverAllSuites(t, testFunc)
+}
+
+func testOverAllSuites(t *testing.T, doTest func(t *testing.T, version, suite uint16)) {
+	t.Helper()
 
 	pre13Suites, tls13Suites := []uint16{}, []uint16{}
 	for suiteValue, suite := range cipherSuites {
@@ -42,69 +98,43 @@ func TestReadAndWrite(t *testing.T) {
 	testFunc := func(version, suite uint16) func(t *testing.T) {
 		return func(t *testing.T) {
 			t.Helper()
-
-			writerState, err := NewConnectionState(version, suite, secret, iv, seq)
-			require.NoError(t, err)
-			readerState, err := NewConnectionState(version, suite, secret, iv, seq)
-			require.NoError(t, err)
-
-			_, err = WriteRecord(buf, []byte(msg), writerState)
-			require.NoError(t, err)
-
-			roundTripped, unprocessed, err := ReadRecord(buf, readerState)
-			require.NoError(t, err)
-			require.Equal(t, msg, string(roundTripped))
-			require.Equal(t, 0, len(unprocessed))
+			doTest(t, version, suite)
 		}
 	}
 
 	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12} {
 		for _, suite := range pre13Suites {
-			t.Run(fmt.Sprintf("version_%#x_suite%#x", version, suite), testFunc(version, suite))
+			t.Run(fmt.Sprintf("version_%#x_suite%s", version, tls.CipherSuiteName(suite)), testFunc(version, suite))
 		}
 	}
 	for _, suite := range tls13Suites {
-		t.Run(fmt.Sprintf("version_%#x_suite%#x", tls.VersionTLS13, suite), testFunc(tls.VersionTLS13, suite))
+		t.Run(fmt.Sprintf("version_%#x_suite%s", tls.VersionTLS13, tls.CipherSuiteName(suite)), testFunc(tls.VersionTLS13, suite))
 	}
 }
 
-func TestReadRecords(t *testing.T) {
-	t.Parallel()
+func createTestData(t *testing.T, msgs ...[]byte) (secret [52]byte, iv [16]byte, seq [8]byte) {
+	t.Helper()
 
-	var (
-		secret [52]byte
-		iv     [16]byte
-		seq    [8]byte
-
-		msgs           = []string{"fee", "fi", "fo", "fum"}
-		version uint16 = tls.VersionTLS13
-		suite          = tls.TLS_AES_128_GCM_SHA256
-		buf            = new(bytes.Buffer)
-	)
-
-	writerState, err := NewConnectionState(version, suite, secret, iv, seq)
-	require.NoError(t, err)
-	readerState, err := NewConnectionState(version, suite, secret, iv, seq)
-	require.NoError(t, err)
-
+	var err error
 	_, err = rand.Read(secret[:])
 	require.NoError(t, err)
 	_, err = rand.Read(iv[:])
 	require.NoError(t, err)
 	_, err = rand.Read(seq[:])
 	require.NoError(t, err)
-
 	for _, msg := range msgs {
-		_, err = WriteRecord(buf, []byte(msg), writerState)
+		_, err = rand.Read(msg)
 		require.NoError(t, err)
 	}
+	return
+}
 
-	results := ReadRecords(buf, readerState)
-	require.Equal(t, len(msgs), len(results))
-	for i := 0; i < len(results); i++ {
-		require.NoError(t, results[i].Err)
-		require.Equal(t, msgs[i], string(results[i].Data))
+func concat(b ...[]byte) []byte {
+	res := []byte{}
+	for _, _b := range b {
+		res = append(res, _b...)
 	}
+	return res
 }
 
 var (
@@ -134,4 +164,49 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// Compares the input slices and attempts to output a descriptive diff when the slices differ. It's
+// not perfect, but it's still helpful.
+func compareBytes(actual, expected []byte) (equal bool, diff string) {
+	if len(expected) > len(actual) {
+		if bytes.Equal(expected[:len(actual)], actual) {
+			return false, fmt.Sprintf("actual (len: %d) is a prefix of expected (len: %d)", len(actual), len(expected))
+		}
+		return false, fmt.Sprintf("lengths differ; actual: %d, expected: %d", len(actual), len(expected))
+	}
+	if len(actual) > len(expected) {
+		if bytes.Equal(actual[:len(expected)], expected) {
+			return false, fmt.Sprintf("expected (len: %d) is a prefix of actual (len: %d)", len(expected), len(actual))
+		}
+		return false, fmt.Sprintf("lengths differ; actual: %d, expected: %d", len(actual), len(expected))
+	}
+
+	equal = true
+	inRange := false
+	rangeString := new(strings.Builder)
+	lastEqual := -1
+	for i := range actual {
+		if actual[i] != expected[i] {
+			equal = false
+			if i-lastEqual <= 1 && !inRange {
+				fmt.Fprintf(rangeString, "[%d, ", i)
+				inRange = true
+			}
+		} else {
+			if i-lastEqual > 1 && inRange {
+				fmt.Fprintf(rangeString, "%d], ", i-1)
+				inRange = false
+			}
+			lastEqual = i
+		}
+	}
+	if len(actual)-lastEqual > 1 {
+		fmt.Fprintf(rangeString, "%d], ", len(actual)-1)
+	}
+	if equal {
+		return true, ""
+	}
+	ranges := rangeString.String()
+	return false, fmt.Sprintf("different over: %s", ranges[:len(ranges)-2])
 }
