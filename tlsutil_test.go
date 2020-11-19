@@ -43,15 +43,15 @@ func TestReadAndWrite(t *testing.T) {
 		return func(t *testing.T) {
 			t.Helper()
 
-			writerState, err := NewConnectionState(version, suite, seq)
+			writerState, err := NewConnectionState(version, suite, secret, iv, seq)
 			require.NoError(t, err)
-			readerState, err := NewConnectionState(version, suite, seq)
-			require.NoError(t, err)
-
-			_, err = WriteRecord(buf, []byte(msg), writerState, secret, iv)
+			readerState, err := NewConnectionState(version, suite, secret, iv, seq)
 			require.NoError(t, err)
 
-			roundTripped, unprocessed, err := ReadRecord(buf, readerState, secret, iv)
+			_, err = WriteRecord(buf, []byte(msg), writerState)
+			require.NoError(t, err)
+
+			roundTripped, unprocessed, err := ReadRecord(buf, readerState)
 			require.NoError(t, err)
 			require.Equal(t, msg, string(roundTripped))
 			require.Equal(t, 0, len(unprocessed))
@@ -82,9 +82,9 @@ func TestReadRecords(t *testing.T) {
 		buf            = new(bytes.Buffer)
 	)
 
-	writerState, err := NewConnectionState(version, suite, seq)
+	writerState, err := NewConnectionState(version, suite, secret, iv, seq)
 	require.NoError(t, err)
-	readerState, err := NewConnectionState(version, suite, seq)
+	readerState, err := NewConnectionState(version, suite, secret, iv, seq)
 	require.NoError(t, err)
 
 	_, err = rand.Read(secret[:])
@@ -95,11 +95,11 @@ func TestReadRecords(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, msg := range msgs {
-		_, err = WriteRecord(buf, []byte(msg), writerState, secret, iv)
+		_, err = WriteRecord(buf, []byte(msg), writerState)
 		require.NoError(t, err)
 	}
 
-	results := ReadRecords(buf, readerState, secret, iv)
+	results := ReadRecords(buf, readerState)
 	require.Equal(t, len(msgs), len(results))
 	for i := 0; i < len(results); i++ {
 		require.NoError(t, results[i].Err)

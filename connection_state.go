@@ -12,61 +12,61 @@ import (
 // ConnectionState tracks the state of a TLS connection. This reflects a subset of the information
 // usually held internally on the tls.Conn type.
 type ConnectionState struct {
-	version        uint16
-	cipherSuite    cipherSuiteI
-	seq            [8]byte  // 64-bit sequence number
-	additionalData [13]byte // to avoid allocs; interface method args escape
+	version                 uint16
+	readCipher, writeCipher *cipherState
+	mac                     macFunction
+	seq                     [8]byte  // 64-bit sequence number
+	additionalData          [13]byte // to avoid allocs; interface method args escape
 }
 
 // NewConnectionState creates a connection state based on the input version and cipher suite. The
 // suite should be represented in https://golang.org/pkg/crypto/tls/#pkg-constants.
 //
-// The sequence number is used as a nonce in some cipher suites. Thus it must be unique
-// per-connection and agreed upon by both client and server.
-func NewConnectionState(version, cipherSuite uint16, seq [8]byte) (*ConnectionState, error) {
+// The secret, IV, and sequence number will be used as needed as parameters for the cipher suite.
+// The sequence number is sometimes used as a nonce and should thus be unique per-connection. All
+// parameters should be agreed upon by both client and server.
+func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byte, seq [8]byte) (
+	*ConnectionState, error) {
+
 	cs, ok := cipherSuites[cipherSuite]
 	if !ok {
 		return nil, fmt.Errorf("unrecognized cipher suite identifier %d", cipherSuite)
 	}
 	return &ConnectionState{
 		version:     version,
-		cipherSuite: cs,
-		// Hard code a random sequence number. The actual value doesn't matter much, the client and
-		// server just have to agree (but only in cases where it's used in the cipher).
-		seq: seq,
+		readCipher:  cs.getCipherState(secret, iv, true, version),
+		writeCipher: cs.getCipherState(secret, iv, false, version),
+		seq:         seq,
 	}, nil
 }
 
-// explicitNonceLen returns the number of bytes of explicit nonce or IV included
-// in each record. Explicit nonces are present only in CBC modes after TLS 1.0
-// and in certain AEAD modes in TLS 1.2.
-func (cs ConnectionState) explicitNonceLen(_cipher interface{}) int {
-	if _cipher == nil {
-		return 0
+func (cs *ConnectionState) getWriteCipher() interface{} {
+	if cs.writeCipher == nil {
+		return nil
 	}
 
-	switch c := _cipher.(type) {
-	case cipher.Stream:
-		return 0
-	case aead:
-		return c.explicitNonceLen()
-	case cbcMode:
-		// TLS 1.1 introduced a per-record explicit IV to fix the BEAST attack.
-		if cs.version >= tls.VersionTLS11 {
-			return c.BlockSize()
-		}
-		return 0
-	default:
-		panic("unknown cipher type")
+	return cs.writeCipher.cipher
+}
+
+func (cs *ConnectionState) getReadCipher() interface{} {
+	if cs.readCipher == nil {
+		return nil
 	}
+
+	return cs.readCipher.cipher
 }
 
 // Simplified version of tls.Conn.maxPayloadSizeForWrite.
 // Subtract TLS overheads to get the maximum payload size.
-func (cs ConnectionState) maxPayloadSizeForWrite(_cipher interface{}, mac macFunction) int {
-	payloadBytes := tcpMSSEstimate - recordHeaderLen - cs.explicitNonceLen(_cipher)
-	if _cipher != nil {
-		switch ciph := _cipher.(type) {
+func (cs ConnectionState) maxPayloadSizeForWrite() int {
+	explicitNonceLen := 0
+	if cs.writeCipher != nil {
+		explicitNonceLen = cs.writeCipher.explicitNonceLen(cs.version)
+	}
+	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitNonceLen
+	if cs.writeCipher != nil {
+		mac := cs.writeCipher.mac
+		switch ciph := cs.writeCipher.cipher.(type) {
 		case cipher.Stream:
 			payloadBytes -= mac.Size()
 		case cipher.AEAD:
@@ -80,7 +80,7 @@ func (cs ConnectionState) maxPayloadSizeForWrite(_cipher interface{}, mac macFun
 			// payload size directly.
 			payloadBytes -= mac.Size()
 		default:
-			panic("unknown cipher type")
+			panic(fmt.Sprintf("unknown cipher type: %#x", ciph))
 		}
 	} else {
 		return maxPlaintext
@@ -91,13 +91,14 @@ func (cs ConnectionState) maxPayloadSizeForWrite(_cipher interface{}, mac macFun
 
 // encrypt encrypts payload, adding the appropriate nonce and/or MAC, and
 // appends it to record, which contains the record header.
-func (cs *ConnectionState) encrypt(record, payload []byte, _cipher interface{}, macFn macFunction, rand io.Reader) ([]byte, error) {
+func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]byte, error) {
+	_cipher := cs.getWriteCipher()
 	if _cipher == nil {
 		return append(record, payload...), nil
 	}
 
 	var explicitNonce []byte
-	if explicitNonceLen := cs.explicitNonceLen(_cipher); explicitNonceLen > 0 {
+	if explicitNonceLen := cs.writeCipher.explicitNonceLen(cs.version); explicitNonceLen > 0 {
 		record, explicitNonce = sliceForAppend(record, explicitNonceLen)
 		if _, isCBC := _cipher.(cbcMode); !isCBC && explicitNonceLen < 16 {
 			// The AES-GCM construction in TLS has an explicit nonce so that the
@@ -118,8 +119,8 @@ func (cs *ConnectionState) encrypt(record, payload []byte, _cipher interface{}, 
 	}
 
 	var mac []byte
-	if macFn != nil {
-		mac = macFn.MAC(cs.seq[:], record[:recordHeaderLen], payload, nil)
+	if cs.writeCipher.mac != nil {
+		mac = cs.writeCipher.mac.MAC(cs.seq[:], record[:recordHeaderLen], payload, nil)
 	}
 
 	var dst []byte
@@ -167,7 +168,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, _cipher interface{}, 
 		}
 		c.CryptBlocks(dst, dst)
 	default:
-		panic("unknown cipher type")
+		panic(fmt.Sprintf("unknown cipher type: %#x", c))
 	}
 
 	// Update length to include nonce, MAC and any block padding needed.
@@ -179,7 +180,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, _cipher interface{}, 
 	return record, nil
 }
 
-func (cs *ConnectionState) decrypt(record []byte, _cipher interface{}, mac macFunction) ([]byte, recordType, error) {
+func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 	var plaintext []byte
 	typ := recordType(record[0])
 	payload := record[recordHeaderLen:]
@@ -193,8 +194,12 @@ func (cs *ConnectionState) decrypt(record []byte, _cipher interface{}, mac macFu
 	paddingGood := byte(255)
 	paddingLen := 0
 
-	explicitNonceLen := cs.explicitNonceLen(_cipher)
+	explicitNonceLen := 0
+	if cs.readCipher != nil {
+		explicitNonceLen = cs.readCipher.explicitNonceLen(cs.version)
+	}
 
+	_cipher := cs.getReadCipher()
 	if _cipher != nil {
 		switch c := _cipher.(type) {
 		case cipher.Stream:
@@ -227,6 +232,7 @@ func (cs *ConnectionState) decrypt(record []byte, _cipher interface{}, mac macFu
 			}
 		case cbcMode:
 			blockSize := c.BlockSize()
+			mac := cs.readCipher.mac
 			minPayload := explicitNonceLen + roundUp(mac.Size()+1, blockSize)
 			if len(payload)%blockSize != 0 || len(payload) < minPayload {
 				return nil, 0, errors.New("bad record MAC")
@@ -250,7 +256,7 @@ func (cs *ConnectionState) decrypt(record []byte, _cipher interface{}, mac macFu
 				paddingLen, paddingGood = extractPadding(payload)
 			}
 		default:
-			panic("unknown cipher type")
+			panic(fmt.Sprintf("unknown cipher type: %#x", c))
 		}
 
 		if cs.version == tls.VersionTLS13 {
@@ -276,7 +282,8 @@ func (cs *ConnectionState) decrypt(record []byte, _cipher interface{}, mac macFu
 		plaintext = payload
 	}
 
-	if mac != nil {
+	if cs.readCipher != nil && cs.readCipher.mac != nil {
+		mac := cs.readCipher.mac
 		macSize := mac.Size()
 		if len(payload) < macSize {
 			return nil, 0, errors.New("bad record MAC")
