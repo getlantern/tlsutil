@@ -162,7 +162,7 @@ func readRecord(r io.Reader, buf *bytes.Buffer, cs *ConnectionState, expectedTyp
 		return nil, n, fmt.Errorf("unexpected record type: %d (expected %d)", typ, expectedType)
 	}
 	// Application Data messages are always protected.
-	if cs.readCipher == nil && typ == recordTypeApplicationData {
+	if cs.getReadCipher() == nil && typ == recordTypeApplicationData {
 		return nil, n, &net.OpError{Op: "local error", Err: errors.New("unexpected message")}
 	}
 

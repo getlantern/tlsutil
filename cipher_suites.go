@@ -10,6 +10,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/tls"
+	"fmt"
 	"hash"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -39,13 +40,13 @@ func (cs cipherState) explicitNonceLen(version uint16) int {
 		}
 		return 0
 	default:
-		panic("unknown cipher type")
+		panic(fmt.Sprintf("unknown cipher type: %#x", c))
 	}
 }
 
 // cipherSuiteI is an interface unifying the cipherSuite and cipherSuiteTLS13 types.
 type cipherSuiteI interface {
-	getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState
+	getCipherState(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState
 }
 
 var cipherSuites = map[uint16]cipherSuiteI{
@@ -91,7 +92,7 @@ type cipherSuite struct {
 	aead   func(key, fixedNonce []byte) aead
 }
 
-func (cs cipherSuite) getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
+func (cs cipherSuite) getCipherState(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
 	c := cipherState{}
 	key, trimmedIV := secret[:cs.keyLen], iv[:cs.ivLen]
 	if cs.cipher != nil {
@@ -114,7 +115,7 @@ type cipherSuiteTLS13 struct {
 	hash   crypto.Hash
 }
 
-func (cs cipherSuiteTLS13) getCipher(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
+func (cs cipherSuiteTLS13) getCipherState(secret [52]byte, iv [16]byte, reading bool, version uint16) *cipherState {
 	trafficSecret := make([]byte, len(secret)+len(iv))
 	copy(trafficSecret, secret[:])
 	copy(trafficSecret[len(secret):], iv[:])

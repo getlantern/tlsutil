@@ -34,10 +34,26 @@ func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byt
 	}
 	return &ConnectionState{
 		version:     version,
-		readCipher:  cs.getCipher(secret, iv, true, version),
-		writeCipher: cs.getCipher(secret, iv, false, version),
+		readCipher:  cs.getCipherState(secret, iv, true, version),
+		writeCipher: cs.getCipherState(secret, iv, false, version),
 		seq:         seq,
 	}, nil
+}
+
+func (cs *ConnectionState) getWriteCipher() interface{} {
+	if cs.writeCipher == nil {
+		return nil
+	}
+
+	return cs.writeCipher.cipher
+}
+
+func (cs *ConnectionState) getReadCipher() interface{} {
+	if cs.readCipher == nil {
+		return nil
+	}
+
+	return cs.readCipher.cipher
 }
 
 // Simplified version of tls.Conn.maxPayloadSizeForWrite.
@@ -64,7 +80,7 @@ func (cs ConnectionState) maxPayloadSizeForWrite() int {
 			// payload size directly.
 			payloadBytes -= mac.Size()
 		default:
-			panic("unknown cipher type")
+			panic(fmt.Sprintf("unknown cipher type: %#x", ciph))
 		}
 	} else {
 		return maxPlaintext
@@ -76,10 +92,10 @@ func (cs ConnectionState) maxPayloadSizeForWrite() int {
 // encrypt encrypts payload, adding the appropriate nonce and/or MAC, and
 // appends it to record, which contains the record header.
 func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]byte, error) {
-	if cs.writeCipher == nil {
+	_cipher := cs.getWriteCipher()
+	if _cipher == nil {
 		return append(record, payload...), nil
 	}
-	_cipher := cs.writeCipher.cipher
 
 	var explicitNonce []byte
 	if explicitNonceLen := cs.writeCipher.explicitNonceLen(cs.version); explicitNonceLen > 0 {
@@ -152,7 +168,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]by
 		}
 		c.CryptBlocks(dst, dst)
 	default:
-		panic("unknown cipher type")
+		panic(fmt.Sprintf("unknown cipher type: %#x", c))
 	}
 
 	// Update length to include nonce, MAC and any block padding needed.
@@ -183,8 +199,9 @@ func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 		explicitNonceLen = cs.readCipher.explicitNonceLen(cs.version)
 	}
 
-	if cs.readCipher != nil {
-		switch c := cs.readCipher.cipher.(type) {
+	_cipher := cs.getReadCipher()
+	if _cipher != nil {
+		switch c := _cipher.(type) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case aead:
@@ -239,7 +256,7 @@ func (cs *ConnectionState) decrypt(record []byte) ([]byte, recordType, error) {
 				paddingLen, paddingGood = extractPadding(payload)
 			}
 		default:
-			panic("unknown cipher type")
+			panic(fmt.Sprintf("unknown cipher type: %#x", c))
 		}
 
 		if cs.version == tls.VersionTLS13 {
