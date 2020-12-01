@@ -31,6 +31,7 @@ const (
 	maxHandshake       = 65536        // maximum handshake we support (protocol max is 16 MB)
 
 	recordTypeChangeCipherSpec recordType = 20
+	recordTypeAlert            recordType = 21
 	recordTypeHandshake        recordType = 22
 	recordTypeApplicationData  recordType = 23
 )

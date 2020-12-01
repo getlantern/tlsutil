@@ -2,6 +2,7 @@ package tlsutil
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -63,6 +64,10 @@ func ParseServerHello(b []byte) (*ServerHello, error) {
 func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
 	const minLen = recordHeaderLen + 4 // 4 bytes is the minimum hello message size
 	if len(b) < minLen {
+		if len(b) > 0 && recordType(b[0]) == recordTypeAlert {
+			// This is just to provide more useful errors.
+			return 0, nil, errors.New("this is an alert record")
+		}
 		return 0, nil, fmt.Errorf("message of length %d bytes is less than minimum of %d bytes", len(b), minLen)
 	}
 
