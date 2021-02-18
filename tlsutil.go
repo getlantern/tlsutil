@@ -36,11 +36,12 @@ const (
 	recordTypeApplicationData  recordType = 23
 )
 
-// WriteRecord writes a TLS record to the input writer. The input secret is broken up into a session
-// key and MAC key as needed for the connection's cipher suite.
+// WriteRecords writes the data to the input writer. The input secret is broken up into a session
+// key and MAC key as needed for the connection's cipher suite. The payload will be broken up into
+// multiple records as needed (the cipher suite has a maximum payload size).
 //
 // This function is adapted from tls.Conn.writeRecordLocked.
-func WriteRecord(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
+func WriteRecords(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
 	var n int
 	for len(data) > 0 {
 		m := len(data)

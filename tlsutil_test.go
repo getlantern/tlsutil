@@ -26,7 +26,7 @@ func TestReadAndWrite(t *testing.T) {
 		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
 		require.NoError(t, err)
 
-		_, err = WriteRecord(buf, msg, writerState)
+		_, err = WriteRecords(buf, msg, writerState)
 		require.NoError(t, err)
 
 		roundTripped, unprocessed, err := ReadRecord(buf, readerState)
@@ -65,7 +65,7 @@ func TestReadRecords(t *testing.T) {
 		require.NoError(t, err)
 
 		for _, msg := range msgs {
-			_, err = WriteRecord(buf, msg, writerState)
+			_, err = WriteRecords(buf, msg, writerState)
 			require.NoError(t, err)
 		}
 
