@@ -12,6 +12,16 @@ import (
 	"net"
 )
 
+// A LargePayloadError is returned by WriteRecord if the payload is too large for a single record.
+type LargePayloadError struct {
+	MaxSizeForCipherSuite int
+	payloadSize           int
+}
+
+func (e LargePayloadError) Error() string {
+	return fmt.Sprintf("payload of %d bytes is too large for a single record", e.payloadSize)
+}
+
 // TLS record types.
 type recordType uint8
 
@@ -36,11 +46,21 @@ const (
 	recordTypeApplicationData  recordType = 23
 )
 
-// WriteRecord writes a TLS record to the input writer. The input secret is broken up into a session
-// key and MAC key as needed for the connection's cipher suite.
+// WriteRecord writes the data to the input writer. Unlike WriteRecords, this function returns a
+// LargePayloadError if the data cannot fit into a single record. In general, WriteRecords should be
+// used unless containing the write to a single record is a requirement.
+func WriteRecord(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
+	if len(data) > cs.maxPayloadSizeForWrite() {
+		return 0, LargePayloadError{cs.maxPayloadSizeForWrite(), len(data)}
+	}
+	return WriteRecords(w, data, cs)
+}
+
+// WriteRecords writes the data to the input writer. The payload will be broken up into multiple
+// records as needed (the cipher suite has a maximum payload size).
 //
 // This function is adapted from tls.Conn.writeRecordLocked.
-func WriteRecord(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
+func WriteRecords(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
 	var n int
 	for len(data) > 0 {
 		m := len(data)
@@ -93,8 +113,6 @@ type ReadResult struct {
 //
 // ReadRecord may "over-read" from r. In this case, unprocessed data is returned along with the
 // record data or error.
-//
-// This function is adapted from tls.Conn.readRecordOrCCS.
 func ReadRecord(r io.Reader, cs *ConnectionState) (data []byte, unprocessed []byte, err error) {
 	buf := new(bytes.Buffer)
 	record, _, err := readRecord(r, buf, cs, recordTypeApplicationData)
@@ -103,6 +121,8 @@ func ReadRecord(r io.Reader, cs *ConnectionState) (data []byte, unprocessed []by
 
 // ReadRecords is like ReadRecord, but attempts to read all records in r. Results will be returned
 // in a slice.
+//
+// This function is adapted from tls.Conn.readRecordOrCCS.
 func ReadRecords(r io.Reader, cs *ConnectionState) ([]ReadResult, error) {
 	var (
 		buf            = new(bytes.Buffer)

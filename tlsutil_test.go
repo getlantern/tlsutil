@@ -26,7 +26,7 @@ func TestReadAndWrite(t *testing.T) {
 		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
 		require.NoError(t, err)
 
-		_, err = WriteRecord(buf, msg, writerState)
+		_, err = WriteRecords(buf, msg, writerState)
 		require.NoError(t, err)
 
 		roundTripped, unprocessed, err := ReadRecord(buf, readerState)
@@ -35,7 +35,7 @@ func TestReadAndWrite(t *testing.T) {
 		require.Equal(t, msg, roundTripped)
 	}
 
-	testOverAllSuites(t, testFunc)
+	TestOverAllSuites(t, testFunc)
 }
 
 func TestReadRecords(t *testing.T) {
@@ -65,7 +65,7 @@ func TestReadRecords(t *testing.T) {
 		require.NoError(t, err)
 
 		for _, msg := range msgs {
-			_, err = WriteRecord(buf, msg, writerState)
+			_, err = WriteRecords(buf, msg, writerState)
 			require.NoError(t, err)
 		}
 
@@ -80,36 +80,7 @@ func TestReadRecords(t *testing.T) {
 		require.True(t, equal, diff)
 	}
 
-	testOverAllSuites(t, testFunc)
-}
-
-func testOverAllSuites(t *testing.T, doTest func(t *testing.T, version, suite uint16)) {
-	t.Helper()
-
-	pre13Suites, tls13Suites := []uint16{}, []uint16{}
-	for suiteValue, suite := range cipherSuites {
-		if _, is13 := suite.(cipherSuiteTLS13); is13 {
-			tls13Suites = append(tls13Suites, suiteValue)
-		} else {
-			pre13Suites = append(pre13Suites, suiteValue)
-		}
-	}
-
-	testFunc := func(version, suite uint16) func(t *testing.T) {
-		return func(t *testing.T) {
-			t.Helper()
-			doTest(t, version, suite)
-		}
-	}
-
-	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12} {
-		for _, suite := range pre13Suites {
-			t.Run(fmt.Sprintf("version_%#x_suite%s", version, tls.CipherSuiteName(suite)), testFunc(version, suite))
-		}
-	}
-	for _, suite := range tls13Suites {
-		t.Run(fmt.Sprintf("version_%#x_suite%s", tls.VersionTLS13, tls.CipherSuiteName(suite)), testFunc(tls.VersionTLS13, suite))
-	}
+	TestOverAllSuites(t, testFunc)
 }
 
 func createTestData(t *testing.T, msgs ...[]byte) (secret [52]byte, iv [16]byte, seq [8]byte) {
