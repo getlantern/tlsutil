@@ -77,6 +77,9 @@ func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	if len(b) < 4 {
+		return 0, nil, errors.New("message too small")
+	}
 
 	msgType = b[0]
 	n := int(b[1])<<16 | int(b[2])<<8 | int(b[3])
