@@ -1,9 +1,12 @@
 package tlsutil
 
 import (
+	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestClientHelloEdgeCases tests that ValidateClientHello is able to tolerate bad input.
@@ -64,11 +67,33 @@ func TestClientHelloEdgeCases(t *testing.T) {
 	}
 
 	for i, r := range badRecords {
-		t.Logf("parsing record %d", i)
 		assert.NotPanics(t, func() {
 			_, err := ValidateClientHello(r)
-			assert.Error(t, err)
+			assert.Error(t, err, "record %d", i)
 		})
 	}
+}
 
+func TestFuzzClientHello(t *testing.T) {
+	t.Parallel()
+	badRecords := make([][]byte, 0)
+
+	f, err := os.Stat("./fuzz-data/corpus")
+	require.NoError(t, err)
+	require.True(t, f.IsDir())
+
+	files, err := ioutil.ReadDir("./fuzz-data/corpus")
+	require.NoError(t, err)
+
+	for _, f := range files {
+		b, err := ioutil.ReadFile("./fuzz-data/corpus/" + f.Name())
+		require.NoError(t, err)
+		badRecords = append(badRecords, b)
+	}
+
+	for i, r := range badRecords {
+		assert.NotPanics(t, func() {
+			ValidateClientHello(r)
+		}, "record %d", i)
+	}
 }
