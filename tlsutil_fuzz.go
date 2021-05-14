@@ -2,6 +2,15 @@
 
 package tlsutil
 
+import (
+	base "github.com/dvyukov/go-fuzz/go-fuzz-defs"
+)
+
+// go-fuzz-build creates a temporary program and wants to import stuff from go-fuzz to compile. This
+// requires a manual 'go get github.com/dvyukov/go-fuzz', which 'go mod tidy' will later want to
+// clean up. This constant allows us to always import go-fuzz without upsetting 'go mod tidy'.
+const _ = base.CoverSize
+
 /*
 	This is a wrapper function for https://github.com/dvyukov/go-fuzz to fuzz this package
 	---
