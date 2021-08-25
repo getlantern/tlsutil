@@ -22,6 +22,14 @@ func (e LargePayloadError) Error() string {
 	return fmt.Sprintf("payload of %d bytes is too large for a single record", e.payloadSize)
 }
 
+// A DecryptError is returned by ReadRecord if the payload could not be successfully decrypted.
+type DecryptError struct {
+	cause error
+}
+
+func (e DecryptError) Error() string { return e.cause.Error() }
+func (e DecryptError) Unwrap() error { return e.cause }
+
 // TLS record types.
 type recordType uint8
 
@@ -190,18 +198,18 @@ func readRecord(r io.Reader, buf *bytes.Buffer, cs *ConnectionState, expectedTyp
 	// Process message.
 	data, typ, err := cs.decrypt(buf.Next(recordHeaderLen + payloadLen))
 	if err != nil {
-		return nil, n, &net.OpError{Op: "local error", Err: err}
+		return nil, n, DecryptError{&net.OpError{Op: "local error", Err: err}}
 	}
 	if len(data) > maxPlaintext {
-		return nil, n, &net.OpError{Op: "local error", Err: errors.New("record overflow")}
+		return nil, n, DecryptError{&net.OpError{Op: "local error", Err: errors.New("record overflow")}}
 	}
 
 	if typ != expectedType {
-		return nil, n, fmt.Errorf("unexpected record type: %d (expected %d)", typ, expectedType)
+		return nil, n, DecryptError{fmt.Errorf("unexpected record type: %d (expected %d)", typ, expectedType)}
 	}
 	// Application Data messages are always protected.
 	if cs.getReadCipher() == nil && typ == recordTypeApplicationData {
-		return nil, n, &net.OpError{Op: "local error", Err: errors.New("unexpected message")}
+		return nil, n, DecryptError{&net.OpError{Op: "local error", Err: errors.New("unexpected message")}}
 	}
 
 	return data, n, nil
