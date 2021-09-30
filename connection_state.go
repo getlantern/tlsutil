@@ -17,6 +17,7 @@ type ConnectionState struct {
 	mac                     macFunction
 	seq                     [8]byte  // 64-bit sequence number
 	additionalData          [13]byte // to avoid allocs; interface method args escape
+	randReader              io.Reader
 }
 
 // NewConnectionState creates a connection state based on the input version and cipher suite. The
@@ -25,7 +26,7 @@ type ConnectionState struct {
 // The secret, IV, and sequence number will be used as needed as parameters for the cipher suite.
 // The sequence number is sometimes used as a nonce and should thus be unique per-connection. All
 // parameters should be agreed upon by both client and server.
-func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byte, seq [8]byte) (
+func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byte, seq [8]byte, randReader io.Reader) (
 	*ConnectionState, error) {
 
 	cs, ok := cipherSuites[cipherSuite]
@@ -37,6 +38,7 @@ func NewConnectionState(version, cipherSuite uint16, secret [52]byte, iv [16]byt
 		readCipher:  cs.getCipherState(secret, iv, true, version),
 		writeCipher: cs.getCipherState(secret, iv, false, version),
 		seq:         seq,
+		randReader:  randReader,
 	}, nil
 }
 
@@ -91,7 +93,7 @@ func (cs ConnectionState) maxPayloadSizeForWrite() int {
 
 // encrypt encrypts payload, adding the appropriate nonce and/or MAC, and
 // appends it to record, which contains the record header.
-func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]byte, error) {
+func (cs *ConnectionState) encrypt(record, payload []byte, randReader io.Reader) ([]byte, error) {
 	_cipher := cs.getWriteCipher()
 	if _cipher == nil {
 		return append(record, payload...), nil
@@ -112,7 +114,7 @@ func (cs *ConnectionState) encrypt(record, payload []byte, rand io.Reader) ([]by
 			// (see the Sweet32 attack).
 			copy(explicitNonce, cs.seq[:])
 		} else {
-			if _, err := io.ReadFull(rand, explicitNonce); err != nil {
+			if _, err := io.ReadFull(randReader, explicitNonce); err != nil {
 				return nil, err
 			}
 		}

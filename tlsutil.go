@@ -4,7 +4,6 @@ package tlsutil
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -94,7 +93,7 @@ func WriteRecords(w io.Writer, data []byte, cs *ConnectionState) (int, error) {
 		outBuf[4] = byte(m)
 
 		var err error
-		outBuf, err = cs.encrypt(outBuf, data[:m], rand.Reader)
+		outBuf, err = cs.encrypt(outBuf, data[:m], cs.randReader)
 		if err != nil {
 			return n, err
 		}

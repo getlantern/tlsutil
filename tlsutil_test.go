@@ -2,7 +2,7 @@ package tlsutil
 
 import (
 	"bytes"
-	"crypto/rand"
+	cryptoRand "crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"strings"
@@ -21,9 +21,9 @@ func TestReadAndWrite(t *testing.T) {
 		t.Helper()
 		buf := new(bytes.Buffer)
 
-		writerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		writerState, err := NewConnectionState(version, suite, secret, iv, seq, cryptoRand.Reader)
 		require.NoError(t, err)
-		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		readerState, err := NewConnectionState(version, suite, secret, iv, seq, cryptoRand.Reader)
 		require.NoError(t, err)
 
 		_, err = WriteRecords(buf, msg, writerState)
@@ -59,9 +59,9 @@ func TestReadRecords(t *testing.T) {
 		t.Helper()
 		buf := new(bytes.Buffer)
 
-		writerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		writerState, err := NewConnectionState(version, suite, secret, iv, seq, cryptoRand.Reader)
 		require.NoError(t, err)
-		readerState, err := NewConnectionState(version, suite, secret, iv, seq)
+		readerState, err := NewConnectionState(version, suite, secret, iv, seq, cryptoRand.Reader)
 		require.NoError(t, err)
 
 		for _, msg := range msgs {
@@ -87,14 +87,14 @@ func createTestData(t *testing.T, msgs ...[]byte) (secret [52]byte, iv [16]byte,
 	t.Helper()
 
 	var err error
-	_, err = rand.Read(secret[:])
+	_, err = cryptoRand.Read(secret[:])
 	require.NoError(t, err)
-	_, err = rand.Read(iv[:])
+	_, err = cryptoRand.Read(iv[:])
 	require.NoError(t, err)
-	_, err = rand.Read(seq[:])
+	_, err = cryptoRand.Read(seq[:])
 	require.NoError(t, err)
 	for _, msg := range msgs {
-		_, err = rand.Read(msg)
+		_, err = cryptoRand.Read(msg)
 		require.NoError(t, err)
 	}
 	return
