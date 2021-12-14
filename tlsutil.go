@@ -205,6 +205,9 @@ func readRecord(r io.Reader, buf *bytes.Buffer, cs *ConnectionState, expectedTyp
 	}
 
 	if typ != expectedType {
+		if typ == recordTypeAlert && len(data) >= 2 {
+			return nil, n, DecryptError{UnexpectedAlertError{Alert(data[1])}}
+		}
 		return nil, n, DecryptError{fmt.Errorf("unexpected record type: %d (expected %d)", typ, expectedType)}
 	}
 	// Application Data messages are always protected.

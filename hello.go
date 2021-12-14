@@ -69,7 +69,7 @@ func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
 		alertLen = recordHeaderLen + 2
 	)
 	if len(b) >= alertLen && recordType(b[0]) == recordTypeAlert {
-		return 0, nil, ErrorUnexpectedAlert{Alert: Alert(b[alertLen-1])}
+		return 0, nil, UnexpectedAlertError{Alert: Alert(b[alertLen-1])}
 	}
 	if len(b) < minLen {
 		return 0, nil, fmt.Errorf("message of length %d bytes is less than minimum of %d bytes", len(b), minLen)
