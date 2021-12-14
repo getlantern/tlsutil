@@ -19,7 +19,7 @@ func TestClientHelloEdgeCases(t *testing.T) {
 			0x03, 0x03, // version: TLS 1.2
 			0x00, 0x00, // payload length: 0 bytes
 			// == Handshake header ==
-			0x01,             // handshake message type: client hello
+			0x01,             // handshake message type: ClientHello
 			0x00, 0x00, 0x00, // handshake payload length: 0 bytes
 		},
 		// record payload too small (handshake payload should be >= 4 bytes)
@@ -29,7 +29,7 @@ func TestClientHelloEdgeCases(t *testing.T) {
 			0x03, 0x03, // version: TLS 1.2
 			0x00, 0x03, // payload length: 3 bytes
 			// == Handshake header ==
-			0x01,             // handshake message type: client hello
+			0x01,             // handshake message type: ClientHello
 			0x00, 0x00, 0x00, // handshake payload length: 0 bytes
 		},
 		// payload length disagreement: record length too small
@@ -39,7 +39,7 @@ func TestClientHelloEdgeCases(t *testing.T) {
 			0x03, 0x03, // version: TLS 1.2
 			0x00, 0x04, // payload length: 4 bytes
 			// == Handshake header ==
-			0x01,             // handshake message type: client hello
+			0x01,             // handshake message type: ClientHello
 			0x00, 0x00, 0x02, // handshake payload length: 2 bytes
 			0x03, 0x03, // client version: TLS 1.2
 		},
@@ -50,7 +50,7 @@ func TestClientHelloEdgeCases(t *testing.T) {
 			0x03, 0x03, // version: TLS 1.2
 			0x00, 0x04, // payload length: 4 bytes
 			// == Handshake header ==
-			0x01,             // handshake message type: client hello
+			0x01,             // handshake message type: ClientHello
 			0x00, 0x00, 0x00, // handshake payload length: 0 bytes
 		},
 		// handshake payload too small
@@ -60,7 +60,7 @@ func TestClientHelloEdgeCases(t *testing.T) {
 			0x03, 0x03, // version: TLS 1.2
 			0x00, 0x06, // payload length: 6 bytes
 			// == Handshake header ==
-			0x01,             // handshake message type: client hello
+			0x01,             // handshake message type: ClientHello
 			0x00, 0x00, 0x02, // handshake payload length: 2 bytes
 			0x03, 0x03, // client version: TLS 1.2
 		},
