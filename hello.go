@@ -16,16 +16,17 @@ const (
 )
 
 // ValidateClientHello can be used to identify the input bytes as a TLS ClientHello message. Returns
-// an error iff the input message cannot be parsed as a client hello. Returns io.EOF if the message
+// an error iff the input message cannot be parsed as a ClientHello. Returns io.EOF if the message
 // is well-formed, but incomplete. When b contains a complete ClientHello, the return value n
-// indicates that the first n bytes of b contain the record.
+// indicates that the first n bytes of b contain the record. Returns ErrorUnexpectedAlert if b
+// begins with an alert record.
 func ValidateClientHello(b []byte) (n int, err error) {
 	msgType, b, err := parseHandshakeHeader(b)
 	if err != nil {
 		return 0, err
 	}
 	if msgType != typeClientHello {
-		return 0, fmt.Errorf("expected client hello message, got TLS handshake type %d", b[0])
+		return 0, fmt.Errorf("expected ClientHello message, got TLS handshake type %d", b[0])
 	}
 
 	m := new(clientHelloMsg)
@@ -41,14 +42,15 @@ type ServerHello struct {
 	Random         []byte
 }
 
-// ParseServerHello parses a server hello message.
+// ParseServerHello parses a ServerHello message. Returns ErrorUnexpectedAlert if b starts with an
+// alert record.
 func ParseServerHello(b []byte) (*ServerHello, error) {
 	msgType, b, err := parseHandshakeHeader(b)
 	if err != nil {
 		return nil, err
 	}
 	if msgType != typeServerHello {
-		return nil, fmt.Errorf("expected server hello message, got TLS handshake type %d", b[0])
+		return nil, fmt.Errorf("expected ServerHello message, got TLS handshake type %d", b[0])
 	}
 
 	m := new(serverHelloMsg)
@@ -62,12 +64,14 @@ func ParseServerHello(b []byte) (*ServerHello, error) {
 }
 
 func parseHandshakeHeader(b []byte) (msgType uint8, rest []byte, err error) {
-	const minLen = recordHeaderLen + 4 // 4 bytes is the minimum hello message size
+	const (
+		minLen   = recordHeaderLen + 4 // 4 bytes is the minimum hello message size
+		alertLen = recordHeaderLen + 2
+	)
+	if len(b) >= alertLen && recordType(b[0]) == recordTypeAlert {
+		return 0, nil, ErrorUnexpectedAlert{Alert: Alert(b[alertLen-1])}
+	}
 	if len(b) < minLen {
-		if len(b) > 0 && recordType(b[0]) == recordTypeAlert {
-			// This is just to provide more useful errors.
-			return 0, nil, errors.New("this is an alert record")
-		}
 		return 0, nil, fmt.Errorf("message of length %d bytes is less than minimum of %d bytes", len(b), minLen)
 	}
 
