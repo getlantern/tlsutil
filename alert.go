@@ -91,11 +91,11 @@ func (e Alert) Error() string {
 	return e.String()
 }
 
-// ErrorUnexpectedAlert is returned in some cases when an alert record is encountered unexpectedly.
-type ErrorUnexpectedAlert struct {
+// UnexpectedAlertError is returned in some cases when an alert record is encountered unexpectedly.
+type UnexpectedAlertError struct {
 	Alert Alert
 }
 
-func (e ErrorUnexpectedAlert) Error() string {
+func (e UnexpectedAlertError) Error() string {
 	return "received unexpected alert record"
 }

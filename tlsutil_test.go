@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 
@@ -15,7 +17,7 @@ func TestReadAndWrite(t *testing.T) {
 	t.Parallel()
 
 	msg := make([]byte, 1024)
-	secret, iv, seq := createTestData(t, msg)
+	secret, iv, seq := createTestState(t, msg)
 
 	testFunc := func(t *testing.T, version, suite uint16) {
 		t.Helper()
@@ -52,7 +54,7 @@ func TestReadRecords(t *testing.T) {
 	for i := range msgs {
 		msgs[i] = make([]byte, msgSize)
 	}
-	secret, iv, seq := createTestData(t, msgs...)
+	secret, iv, seq := createTestState(t, msgs...)
 	totalMsgs := concat(msgs...)
 
 	testFunc := func(t *testing.T, version, suite uint16) {
@@ -83,7 +85,86 @@ func TestReadRecords(t *testing.T) {
 	TestOverAllSuites(t, testFunc)
 }
 
-func createTestData(t *testing.T, msgs ...[]byte) (secret [52]byte, iv [16]byte, seq [8]byte) {
+// TestAlertError ensures that UnexpectedAlertError is returned when expected.
+func TestAlertError(t *testing.T) {
+	serverCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
+		// Ensures that the server will send a 'bad certificate' alert.
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
+	clientCfg := &tls.Config{
+		InsecureSkipVerify: true,
+	}
+
+	l, err := tls.Listen("tcp", "", serverCfg)
+	require.NoError(t, err)
+	defer l.Close()
+
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil && errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if err != nil {
+				t.Logf("accept error: %v", err)
+			}
+
+			go func(conn net.Conn) {
+				err := conn.(*tls.Conn).Handshake()
+				require.Error(t, err, "expected a handshake error")
+				conn.Close()
+			}(c)
+		}
+	}()
+
+	tcpConn, err := net.Dial("tcp", l.Addr().String())
+	require.NoError(t, err)
+
+	capConn := newCaptureConn(tcpConn)
+	conn := tls.Client(capConn, clientCfg)
+	handshakeErr := conn.Handshake()
+	require.Error(t, handshakeErr)
+
+	connState := new(ConnectionState)
+	connState.version = tls.VersionTLS12
+
+	var (
+		readErr error
+		readBuf = new(bytes.Buffer)
+	)
+	for capConn.buf.Len()+readBuf.Len() > 0 && readErr == nil {
+		_, _, readErr = readRecord(capConn.buf, readBuf, connState, recordTypeHandshake)
+	}
+	require.Error(t, readErr, "read all records without error; expected to find alert record")
+
+	var (
+		decryptErr DecryptError
+		alertErr   UnexpectedAlertError
+	)
+	require.True(t, errors.As(readErr, &decryptErr))
+	require.True(t, errors.As(readErr, &alertErr))
+	require.Equal(t, AlertBadCertificate, alertErr.Alert)
+}
+
+type captureConn struct {
+	net.Conn
+	buf *bytes.Buffer
+}
+
+func newCaptureConn(wrapped net.Conn) captureConn {
+	return captureConn{wrapped, new(bytes.Buffer)}
+}
+
+func (conn captureConn) Read(b []byte) (n int, err error) {
+	n, err = conn.Conn.Read(b)
+	conn.buf.Write(b[:n])
+	return
+}
+
+func createTestState(t *testing.T, msgs ...[]byte) (secret [52]byte, iv [16]byte, seq [8]byte) {
 	t.Helper()
 
 	var err error
