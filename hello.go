@@ -16,9 +16,9 @@ const (
 )
 
 // ValidateClientHello can be used to identify the input bytes as a TLS ClientHello message. Returns
-// an error iff the input message cannot be parsed as a ClientHello. Returns io.EOF if the message
-// is well-formed, but incomplete. When b contains a complete ClientHello, the return value n
-// indicates that the first n bytes of b contain the record. Returns ErrorUnexpectedAlert if b
+// an error iff the input message cannot be parsed as a ClientHello. Returns io.UnexpectedEOF if the
+// message is well-formed, but incomplete. When b contains a complete ClientHello, the return value
+// n indicates that the first n bytes of b contain the record. Returns ErrorUnexpectedAlert if b
 // begins with an alert record.
 func ValidateClientHello(b []byte) (n int, err error) {
 	msgType, b, err := parseHandshakeHeader(b)
